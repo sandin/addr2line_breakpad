@@ -146,7 +146,7 @@ fn parse_breakpad_symbol_file(filename: &Path) -> SymbolFile {
 
     for line in reader.lines() {
         let line = line.unwrap(); // Ignore errors.
-                                  //println!("{:?}", line);
+        //println!("{:?}", line);
         if line.starts_with("FILE ") {
             parse_file_line(&mut symbol_file, &line);
         } else if line.starts_with("STACK ") {
@@ -242,7 +242,7 @@ fn parse_func_line(symbol: &mut SymbolFile, line: &str) {
     let stack_param_size = tokens.get(offset + 2).unwrap();
     let name = tokens.get(offset + 3).unwrap();
 
-    println!("address={:?}, size={:?}", address, size);
+    //println!("address={:?}, size={:?}", address, size);
     let address: u64 = u64::from_str_radix(address, 16).unwrap();
     let size: u64 = u64::from_str_radix(size, 16).unwrap();
     let stack_param_size: u64 = u64::from_str_radix(stack_param_size, 16).unwrap();
