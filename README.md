@@ -12,4 +12,4 @@ addr2line for breakpad symbol file
 
 # Build
 
-cargo rustc -- -C link-args="resources.res"
+cargo build
