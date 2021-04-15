@@ -1,0 +1,10 @@
+[package]
+name = "addr2line_breakpad"
+version = "0.1.0"
+authors = ["lds <lds2012@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = "2.33.0"
