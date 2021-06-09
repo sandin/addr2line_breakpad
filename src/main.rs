@@ -13,15 +13,15 @@ use std::process;
 struct Line {
     address: u64,
     size: u64,
-    line_number: u64,
-    source_file_id: u64,
+    line_number: i64,
+    source_file_id: i64,
 }
 
 #[derive(Debug, Default)]
 struct Function {
     address: u64,
     size: u64,
-    stack_param_size: u64,
+    stack_param_size: i64,
     name: String,
     is_multiple: bool,
 }
@@ -29,7 +29,7 @@ struct Function {
 #[derive(Debug)]
 struct PublicSymbol {
     address: u64,
-    stack_param_size: u64,
+    stack_param_size: i64,
     name: String,
     is_multiple: bool,
 }
@@ -43,7 +43,7 @@ struct Symbol {
 
 #[derive(Debug)]
 struct SymbolFile {
-    files: HashMap<u64, String>,
+    files: HashMap<i64, String>,
     functions: RangeMap<Function>,
     lines: RangeMap<Line>,
     public_symbols: BTreeMap<u64, PublicSymbol>,
@@ -184,8 +184,8 @@ fn parse_line_line(symbol: &mut SymbolFile, line: &str) {
     //println!("address={:?}, size={:?}, line_number={:?} source_file_id={:?}", address, size, line_number, source_file_id);
     let address: u64 = u64::from_str_radix(address, 16).unwrap();
     let size: u64 = u64::from_str_radix(size, 16).unwrap();
-    let line_number: u64 = u64::from_str_radix(line_number, 10).unwrap();
-    let source_file_id: u64 = u64::from_str_radix(source_file_id, 10).unwrap();
+    let line_number: i64 = i64::from_str_radix(line_number, 10).unwrap();
+    let source_file_id: i64 = i64::from_str_radix(source_file_id, 10).unwrap();
 
     let line = Line {
         address,
@@ -214,7 +214,7 @@ fn parse_public_line(symbol: &mut SymbolFile, line: &str) {
 
     //println!("name={:?} address={:?}, stack_param_size={:?}", name, address, stack_param_size);
     let address: u64 = u64::from_str_radix(address, 16).unwrap();
-    let stack_param_size: u64 = u64::from_str_radix(stack_param_size, 16).unwrap();
+    let stack_param_size: i64 = i64::from_str_radix(stack_param_size, 16).unwrap();
 
     let public_symbol = PublicSymbol {
         address,
@@ -245,7 +245,7 @@ fn parse_func_line(symbol: &mut SymbolFile, line: &str) {
     //println!("address={:?}, size={:?}", address, size);
     let address: u64 = u64::from_str_radix(address, 16).unwrap();
     let size: u64 = u64::from_str_radix(size, 16).unwrap();
-    let stack_param_size: u64 = u64::from_str_radix(stack_param_size, 16).unwrap();
+    let stack_param_size: i64 = i64::from_str_radix(stack_param_size, 16).unwrap();
 
     let function = Function {
         address,
@@ -266,7 +266,7 @@ fn parse_file_line(symbol: &mut SymbolFile, line: &str) {
     let tokens: Vec<&str> = tokenize(line, " ", 2);
     let id = tokens.get(0).unwrap();
     let filename = tokens.get(1).unwrap();
-    let id: u64 = u64::from_str_radix(id, 10).unwrap();
+    let id: i64 = i64::from_str_radix(id, 10).unwrap();
     //println!("id={}, filename={}", id, filename);
     symbol.files.insert(id, String::from(*filename));
 }
