@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::SeekFrom;
 use std::ops::Bound::Included;
 use std::path::Path;
 use std::process;
+use std::vec::Vec;
 
 #[derive(Debug)]
 struct Line {
@@ -132,6 +134,71 @@ fn lookup_address(symbol_file: &SymbolFile, address: u64) -> Option<Symbol> {
         None
     }
 }
+
+fn fast_search(reader: &mut BufReader<File>, address: u64) -> Option<Symbol> {
+    let symbol: Option<Symbol> = fast_search_line_by_line(reader, address, "FUNC ");
+    if symbol.is_some() {
+        // TODO: find line info
+        return symbol;
+    }
+
+    let symbol: Option<Symbol> = fast_search_line_by_line(reader, address, "PUBLIC ");
+    if symbol.is_some() {
+        return symbol;
+    }
+
+    None
+}
+
+fn fast_search_line_by_line(reader: &mut BufReader<File>, address: u64, prefix: &str) -> Option<Symbol> {
+    reader.seek(SeekFrom::Start(0)).unwrap(); // reset
+
+    //let mut addresses_index = Vec::new();
+    for line in reader.lines() {
+        let line = line.unwrap(); // Ignore errors.
+        let line = line.trim();
+        if line.starts_with(prefix) {
+            assert_eq!(prefix == "FUNC " || prefix == "PUBLIC ", true);
+            //println!("{:?}", line);
+            let tmp: Vec<&str> = line.split(" ").collect();
+            // TODO: check index in-bounds
+           
+            let start_addr: u64;
+            let mut offset = 0;
+            if tmp[1] == "m" {
+                offset = 1;
+            } 
+            start_addr = u64::from_str_radix(tmp[offset + 1], 16).unwrap();
+
+            if prefix == "FUNC " {
+                if start_addr <= address { // && address <= end_addr
+                    let size: u64 = u64::from_str_radix(tmp[offset + 2], 16).unwrap();
+                    let end_addr: u64 = start_addr + size;
+                    if address <= end_addr {
+                        let name = tmp[offset + 4];
+                        return Some(Symbol {
+                            function_name: String::from(name),
+                            source_file_name: String::from(""),
+                            source_file_number: -1,
+                        })
+                    }
+                }
+            } else if prefix == "PUBLIC " {
+                if start_addr >= address { 
+                    let name = tmp[offset + 3];
+                    return Some(Symbol {
+                        function_name: String::from(name),
+                        source_file_name: String::from(""),
+                        source_file_number: -1,
+                    })
+                }
+            }
+        }
+    }
+
+    None
+}
+
 
 fn parse_breakpad_symbol_file(filename: &Path) -> SymbolFile {
     let file = File::open(filename).unwrap();
@@ -331,6 +398,7 @@ fn main() {
         .author("liudingsan <lds2012@gmail.com>")
         .arg(Arg::with_name("input").help("input symbol file"))
         .arg(Arg::with_name("address").help("address to lookup").multiple(true))
+        .arg(Arg::with_name("noline").long("noline").help("skip source file name and line number").takes_value(false))
         .get_matches();
 
     let input = matches.value_of("input").unwrap();
@@ -342,19 +410,38 @@ fn main() {
 
     let addresses: Vec<u64> = matches.values_of("address").unwrap().map(|addr| parse_address(addr).unwrap()).collect();
 
-    let symbol_file = parse_breakpad_symbol_file(input);
+    if let Some(_) = matches.values_of("noline") {
+        let file = File::open(input).unwrap();
+        let mut reader = BufReader::new(file);
 
-    for address in addresses {
-        if let Some(symbol) = lookup_address(&symbol_file, address) {
-            let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
-            let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
-            println!(
-                "{:#x} {} {}:{}",
-                address, symbol.function_name, source_file_name, source_file_number
-            );
-        } else {
-            println!("Not found symbol for address({:#x}", address);
+        for address in addresses {
+            // Fast search 
+            if let Some(symbol) = fast_search(&mut reader, address) {
+                let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
+                let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
+                println!(
+                    "{:#x} {} {}:{}",
+                    address, symbol.function_name, source_file_name, source_file_number
+                );
+            } else {
+                println!("Not found symbol for address({:#x}", address);
+            }
         }
+    } else {
+         // Parse all symbols first
+         let symbol_file = parse_breakpad_symbol_file(input);
+         for address in addresses {
+             if let Some(symbol) = lookup_address(&symbol_file, address) {
+                 let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
+                 let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
+                 println!(
+                     "{:#x} {} {}:{}",
+                     address, symbol.function_name, source_file_name, source_file_number
+                 );
+             } else {
+                 println!("Not found symbol for address({:#x}", address);
+             }
+         }
     }
 }
 
