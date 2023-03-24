@@ -270,7 +270,7 @@ fn parse_public_line(symbol: &mut SymbolFile, line: &str) {
     let line = line.trim();
 
     let tokens: Vec<&str> = tokenize_with_optional_field(line, "m", " ", 4);
-    let is_multiple = tokens.len() >= 5 && *tokens.get(0).unwrap() == "m";
+    let is_multiple = tokens.len() >= 4 && *tokens.get(0).unwrap() == "m";
     let mut offset = 0;
     if is_multiple {
         offset = 1;
