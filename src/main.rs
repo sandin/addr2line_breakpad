@@ -73,7 +73,7 @@ impl<T> RangeMap<T> {
         self.map.insert(address, RangeItem { item, size });
     }
 
-    pub fn retrieve_range<'a>(&'a self, address: u64) -> Option<&'a T> {
+    pub fn retrieve_range<'a>(&'a self, address: u64) -> Option<(&'a T, u64)> {
         if let Some(greater_one) = self
             .map
             .range((Included(&0), Included(&address)))
@@ -84,7 +84,7 @@ impl<T> RangeMap<T> {
             let target_size = range_item.size;
             //println!("Found item {:#x},", target_address);
             if target_address <= address && address <= target_address + target_size {
-                return Some(&range_item.item);
+                return Some((&range_item.item, address - target_address));
             }
         }
         None
@@ -94,34 +94,36 @@ impl<T> RangeMap<T> {
 fn find_public_symbol_by_address<'a>(
     map: &'a BTreeMap<u64, PublicSymbol>,
     address: u64,
-) -> Option<&'a PublicSymbol> {
+) -> Option<(&'a PublicSymbol, u64)> {
     if let Some(greater_one) = map.range((Included(&0), Included(&address))).next_back() {
         let target_address = *greater_one.0;
         let target_item = greater_one.1;
         //println!("Found address {:#x}", target_address);
         if target_address <= address {
-            return Some(&target_item);
+            return Some((&target_item, address - target_address));
         }
     }
     None
 }
 
-fn lookup_address(symbol_file: &SymbolFile, address: u64) -> Option<Symbol> {
-    if let Some(function_record) = symbol_file.functions.retrieve_range(address) {
+fn lookup_address(symbol_file: &SymbolFile, address: u64) -> Option<(Symbol, u64)> {
+    if let Some((function_record, offset)) = symbol_file.functions.retrieve_range(address) {
         let mut symbol = Symbol {
             function_name: function_record.name.clone(),
             source_file_name: String::from(""),
             source_file_number: -1,
         };
+        let mut offset_from_symbol: u64 = 0;
 
-        if let Some(line) = symbol_file.lines.retrieve_range(address) {
+        if let Some((line, offset)) = symbol_file.lines.retrieve_range(address) {
+            offset_from_symbol = offset;
             symbol.source_file_number = line.line_number as i64;
             if let Some(filename) = symbol_file.files.get(&line.source_file_id) {
                 symbol.source_file_name = filename.to_string();
             }
         }
-        Some(symbol)
-    } else if let Some(public_record) =
+        Some((symbol, offset_from_symbol))
+    } else if let Some((public_record, offset)) =
         find_public_symbol_by_address(&symbol_file.public_symbols, address)
     {
         let symbol = Symbol {
@@ -129,7 +131,7 @@ fn lookup_address(symbol_file: &SymbolFile, address: u64) -> Option<Symbol> {
             source_file_name: String::from(""),
             source_file_number: -1,
         };
-        Some(symbol)
+        Some((symbol, offset))
     } else {
         None
     }
@@ -382,11 +384,20 @@ fn tokenize<'a>(line: &'a str, token: &str, max_tokens: usize) -> Vec<&'a str> {
     result
 }
 
-fn parse_address(address: &str) -> Option<u64> {
-    let addr = if address.starts_with("0x") { &address[2..] } else { address };
+fn parse_address(address: &str) -> Option<i64> {
+    let addr;
+    let mut radio: i64 = 1;
+    if address.starts_with("0x") {
+        addr = &address[2..];
+    } else if address.starts_with("-0x") {
+        addr = &address[3..];
+        radio = -1;
+    } else {
+        addr = address;
+    }
 
-    return match u64::from_str_radix(addr, 16) {
-        Ok(result) => Some(result),
+    return match i64::from_str_radix(addr, 16) {
+        Ok(result) => Some(result * radio),
         Err(_) => None
     };
 }
@@ -398,6 +409,7 @@ fn main() {
         .author("liudingsan <lds2012@gmail.com>")
         .arg(Arg::with_name("input").help("input symbol file"))
         .arg(Arg::with_name("address").help("address to lookup").multiple(true))
+        .arg(Arg::with_name("offset").short("o").long("offset").help("offset of addresses").takes_value(true))
         .arg(Arg::with_name("noline").long("noline").help("skip source file name and line number").takes_value(false))
         .get_matches();
 
@@ -408,7 +420,13 @@ fn main() {
         process::exit(-1);
     }
 
-    let addresses: Vec<u64> = matches.values_of("address").unwrap().map(|addr| parse_address(addr).unwrap()).collect();
+    let offset = parse_address(matches.value_of("offset").unwrap_or("0")).unwrap_or(0);
+    //println!("offset: {} -> {}", matches.value_of("offset").unwrap_or("0"), offset);
+    let addresses: Vec<u64> = matches.values_of("address").unwrap().map(|addr| {
+        let addr = parse_address(addr).unwrap();
+        let offset_addr: i64 = addr + offset as i64;
+        return if (offset_addr > 0) { offset_addr as u64 } else { 0 };
+    }).collect();
 
     if let Some(_) = matches.values_of("noline") {
         let file = File::open(input).unwrap();
@@ -424,19 +442,19 @@ fn main() {
                     address, symbol.function_name, source_file_name, source_file_number
                 );
             } else {
-                println!("Not found symbol for address({:#x}", address);
+                println!("Not found symbol for address {:#x}", address);
             }
         }
     } else {
          // Parse all symbols first
          let symbol_file = parse_breakpad_symbol_file(input);
          for address in addresses {
-             if let Some(symbol) = lookup_address(&symbol_file, address) {
+             if let Some((symbol, offset)) = lookup_address(&symbol_file, address) {
                  let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
                  let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
                  println!(
-                     "{:#x} {} {}:{}",
-                     address, symbol.function_name, source_file_name, source_file_number
+                     "{:#x} {}+{} {}:{}",
+                     address, symbol.function_name, offset, source_file_name, source_file_number
                  );
              } else {
                  println!("Not found symbol for address({:#x}", address);
@@ -529,7 +547,7 @@ mod tests {
         let address = 3;
         let result = symbol_file.functions.retrieve_range(address);
         assert_eq!(result.is_none(), false);
-        let target = result.unwrap();
+        let (target, offset) = result.unwrap();
         assert_eq!(target.address, 3);
 
         let address = 5;
