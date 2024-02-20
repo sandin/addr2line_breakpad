@@ -47,6 +47,7 @@ struct Symbol {
 struct SymbolFile {
     files: HashMap<i64, String>,
     functions: RangeMap<Function>,
+    unwind_table: RangeMap<Function>,
     lines: RangeMap<Line>,
     public_symbols: BTreeMap<u64, PublicSymbol>,
 }
@@ -137,6 +138,14 @@ fn lookup_address(symbol_file: &SymbolFile, address: u64) -> Option<(Symbol, u64
     }
 }
 
+fn lookup_unwind_info(symbol_file: &SymbolFile, address: u64) -> Option<&Function> {
+    if let Some((function_record, _)) = symbol_file.unwind_table.retrieve_range(address) {
+        Some(function_record)
+    } else {
+        None
+    }
+}
+
 fn fast_search(reader: &mut BufReader<File>, address: u64) -> Option<Symbol> {
     let symbol: Option<Symbol> = fast_search_line_by_line(reader, address, "FUNC ");
     if symbol.is_some() {
@@ -209,6 +218,7 @@ fn parse_breakpad_symbol_file(filename: &Path) -> SymbolFile {
     let mut symbol_file = SymbolFile {
         files: HashMap::new(),
         functions: RangeMap::new(),
+        unwind_table: RangeMap::new(),
         lines: RangeMap::new(),
         public_symbols: BTreeMap::new(),
     };
@@ -219,7 +229,7 @@ fn parse_breakpad_symbol_file(filename: &Path) -> SymbolFile {
         if line.starts_with("FILE ") {
             parse_file_line(&mut symbol_file, &line);
         } else if line.starts_with("STACK ") {
-            // pass
+            parse_cfi_line(&mut symbol_file, &line);
         } else if line.starts_with("FUNC ") {
             parse_func_line(&mut symbol_file, &line);
         } else if line.starts_with("PUBLIC ") {
@@ -340,6 +350,29 @@ fn parse_file_line(symbol: &mut SymbolFile, line: &str) {
     symbol.files.insert(id, String::from(*filename));
 }
 
+fn parse_cfi_line(symbol: &mut SymbolFile, line: &str) {
+    // STACK CFI INIT <address> <size> .cfa: sp 0 +
+    if line.starts_with("STACK CFI INIT ") {
+        let line = &line[15..]; // skip prefix
+        let line = line.trim();
+
+        let tokens: Vec<&str> = tokenize(line, " ", 3);
+        let address = tokens.get(0).unwrap();
+        let size = tokens.get(1).unwrap();
+        let address: u64 = u64::from_str_radix(address, 16).unwrap();
+        let size: u64 = u64::from_str_radix(size, 16).unwrap();
+
+        let function = Function {
+            address,
+            size,
+            name: String::from("unknown"),
+            is_multiple: false,
+            stack_param_size: 0,
+        };
+        symbol.unwind_table.insert(address, size, function);
+    }
+}
+
 fn tokenize_with_optional_field<'a>(line: &'a str, optional_field: &str, token: &str, max_tokens: usize) -> Vec<&'a str> {
     // First tokenize assuming the optional field is not present.  If we then see
     // the optional field, additionally tokenize the last token into two tokens
@@ -411,6 +444,7 @@ fn main() {
         .arg(Arg::with_name("address").help("address to lookup").multiple(true))
         .arg(Arg::with_name("offset").short("o").long("offset").help("offset of addresses").takes_value(true))
         .arg(Arg::with_name("noline").long("noline").help("skip source file name and line number").takes_value(false))
+        .arg(Arg::with_name("unwind").long("unwind").help("get the range of the function from cfi unwind info").takes_value(false))
         .get_matches();
 
     let input = matches.value_of("input").unwrap();
@@ -449,16 +483,25 @@ fn main() {
          // Parse all symbols first
          let symbol_file = parse_breakpad_symbol_file(input);
          for address in addresses {
-             if let Some((symbol, offset)) = lookup_address(&symbol_file, address) {
-                 let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
-                 let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
-                 println!(
-                     "{:#x} {}+{} {}:{}",
-                     address, symbol.function_name, offset, source_file_name, source_file_number
-                 );
-             } else {
-                 println!("Not found symbol for address({:#x}", address);
-             }
+            if let Some(_) = matches.values_of("unwind") {
+                if let Some(function_record) = lookup_unwind_info(&symbol_file, address) {
+                    println!("unwind function range: {:#x} - {:#x}, target address: {:#x}, offset: {:#x}", 
+                        function_record.address, function_record.address + function_record.size, address, address - function_record.address);
+                } else {
+                    println!("Not found unwind info for address({:#x}", address);
+                }
+            } else {
+                if let Some((symbol, offset)) = lookup_address(&symbol_file, address) {
+                    let source_file_name = if symbol.source_file_name.len() != 0 { symbol.source_file_name } else { String::from("??") };
+                    let source_file_number = if symbol.source_file_number != -1 { symbol.source_file_number.to_string() } else { String::from("?") };
+                    println!(
+                        "{:#x} {}+{} {}:{}",
+                        address, symbol.function_name, offset, source_file_name, source_file_number
+                    );
+                } else {
+                    println!("Not found symbol for address({:#x}", address);
+                }
+            }
          }
     }
 }
@@ -494,6 +537,7 @@ mod tests {
         let mut symbol_file = SymbolFile {
             files: HashMap::new(),
             functions: RangeMap::new(),
+            unwind_table: RangeMap::new(),
             public_symbols: BTreeMap::new(),
             lines: RangeMap::new(),
         };
